@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -26,7 +27,6 @@ var (
 )
 
 func main() {
-
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 
@@ -36,10 +36,10 @@ func main() {
 			Y: 1,
 		},
 	}
-	InitMap()
-	go KeyPress()
-	go MovePlayer()
-	go Render()
+	initMap()
+	go keyPress()
+	go movePlayer()
+	go render()
 	<-c
 	fmt.Println("Done!")
 }
@@ -53,43 +53,53 @@ type Player struct {
 	Position
 }
 
-var clear map[string]func()
+var clear = map[string]string{
+	"linux":   "clear",
+	"darwin":  "clear",
+	"windows": "cls",
+}
+
 var controller = make(chan Position, 1)
 
-func init() {
-	clear = make(map[string]func()) //Initialize it
-	clear["linux"] = func() {
-		cmd := exec.Command("clear") //Linux example, its tested
+func clearScreen() {
+	value, ok := clear[runtime.GOOS]
+	if ok {
+		cmd := exec.Command(value)
 		cmd.Stdout = os.Stdout
-		cmd.Run()
-	}
-	clear["windows"] = func() {
-		cmd := exec.Command("cls") //Windows example it is untested, but I think its working
-		cmd.Stdout = os.Stdout
-		cmd.Run()
+		err := cmd.Run()
+		if err != nil {
+			log.Fatalln(fmt.Errorf("error on run clear: %w", err))
+		}
+	} else {
+		log.Fatalln("your platform is unsupported! I can't clear terminal screen :(")
 	}
 }
 
-func ClearScreen() {
-	value, ok := clear[runtime.GOOS] //runtime.GOOS -> linux, windows, darwin etc.
-	if ok {                          //if we defined a clear func for that platform:
-		value() //we execute it
-	} else { //unsupported platform
-		panic("Your platform is unsupported! I can't clear terminal screen :(")
-	}
-}
-
-func KeyPress() {
+func keyPress() {
 	// disable input buffering
-	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+	err := exec.Command("stty", "-f", "/dev/tty", "cbreak", "min", "1").Run()
+	if err != nil {
+		log.Fatalln(fmt.Errorf("error on run disable input buffering: %w", err))
+	}
 	// do not display entered characters on the screen
-	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+	err = exec.Command("stty", "-f", "/dev/tty", "-echo").Run()
+	if err != nil {
+		log.Fatalln(fmt.Errorf("error on run command: %w", err))
+	}
 	// restore the echoing state when exiting
-	defer exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+	defer func() {
+		err := exec.Command("stty", "-f", "/dev/tty", "echo").Run()
+		if err != nil {
+			log.Fatalln(fmt.Errorf("error on run reset: %w", err))
+		}
+	}()
 
-	var b []byte = make([]byte, 1)
+	var b = make([]byte, 1)
 	for {
-		os.Stdin.Read(b)
+		_, err = os.Stdin.Read(b)
+		if err != nil {
+			log.Fatalln(fmt.Errorf("error on read standard input: %w", err))
+		}
 		switch string(b) {
 		case "a", "A":
 			controller <- Position{X: -1, Y: 0}
@@ -103,7 +113,7 @@ func KeyPress() {
 	}
 }
 
-func MovePlayer() {
+func movePlayer() {
 	for {
 		k := <-controller
 		if !mpp[player.X+k.X][player.Y+k.Y] {
@@ -113,27 +123,27 @@ func MovePlayer() {
 	}
 }
 
-func Render() {
+func render() {
 	for {
-		ClearScreen()
+		clearScreen()
 		for y := 0; y < HEIGHT; y++ {
 			for x := 0; x < WIDTH; x++ {
 				if mpp[x][y] {
 					val := 0
 
-					if x > 0 && mpp[x - 1][y] {
+					if x > 0 && mpp[x-1][y] {
 						val += LEFT
 					}
 
-					if x < WIDTH - 1 && mpp[x + 1][y] {
+					if x < WIDTH-1 && mpp[x+1][y] {
 						val += RIGHT
 					}
 
-					if y > 0 && mpp[x][y - 1] {
+					if y > 0 && mpp[x][y-1] {
 						val += UP
 					}
 
-					if y < HEIGHT - 1 && mpp[x][y + 1] {
+					if y < HEIGHT-1 && mpp[x][y+1] {
 						val += DOWN
 					}
 
@@ -171,11 +181,11 @@ func Render() {
 			}
 			fmt.Print("\n")
 		}
-		time.Sleep(time.Millisecond*100)
+		time.Sleep(time.Millisecond * 100)
 	}
 }
 
-func InitMap() {
+func initMap() {
 	rand.Seed(int64(time.Now().Nanosecond()))
 	for y := HEIGHT - 1; y >= 0; y-- {
 		for x := WIDTH - 1; x >= 0; x-- {
